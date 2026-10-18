@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.env
+
+# Dataset and trained model
+data/creditcard.csv
+models/*.joblib
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE and operating system
+.vscode/
+.DS_Store
+Thumbs.db
