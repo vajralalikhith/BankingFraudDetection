@@ -1,327 +1,448 @@
 from pathlib import Path
+
 import joblib
 import pandas as pd
 import streamlit as st
 
-from database import (
-    get_statistics,
-    get_transactions,
-    initialize_database,
-    save_transaction,
-)
-
 BASE_DIR = Path(__file__).resolve().parent
-DATA_PATH = BASE_DIR / "data" / "creditcard.csv"
 MODEL_PATH = BASE_DIR / "models" / "random_forest.joblib"
+DATA_PATH = BASE_DIR / "data" / "creditcard.csv"
 
 st.set_page_config(
     page_title="Banking Fraud Detection",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background: linear-gradient(135deg, #0b1220 0%, #111827 55%, #172554 100%);
+        color: #f8fafc;
+    }
+    [data-testid="stHeader"] {
+        background: transparent;
+    }
+    [data-testid="stMetric"] {
+        background: rgba(30, 41, 59, 0.72);
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        padding: 18px;
+        border-radius: 14px;
+    }
+    div.stButton > button, div.stFormSubmitButton > button {
+        border-radius: 10px;
+        font-weight: 600;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
 @st.cache_resource
-def load_model_bundle():
+def load_model():
     if not MODEL_PATH.exists():
-        return None
-    return joblib.load(MODEL_PATH)
+        return None, "Model file not found."
+
+    try:
+        bundle = joblib.load(MODEL_PATH)
+
+        # Supports the dictionary format saved by train_model.py.
+        if isinstance(bundle, dict) and "model" in bundle:
+            model = bundle["model"]
+            features = bundle.get("features")
+            metrics = bundle.get("metrics", {})
+        else:
+            # Also supports a directly saved sklearn model.
+            model = bundle
+            features = getattr(model, "feature_names_in_", None)
+            metrics = {}
+
+        if features is None:
+            features = [
+                "Time",
+                *[f"V{i}" for i in range(1, 29)],
+                "Amount",
+            ]
+
+        return {
+            "model": model,
+            "features": list(features),
+            "metrics": metrics,
+        }, None
+
+    except Exception as exc:
+        return None, str(exc)
 
 
 @st.cache_data
 def load_dataset():
     if not DATA_PATH.exists():
         return None
-    return pd.read_csv(DATA_PATH)
 
-
-def get_database_status():
     try:
+        return pd.read_csv(DATA_PATH)
+    except Exception:
+        return None
+
+
+def save_to_mysql(
+    transaction_time,
+    amount,
+    predicted_class,
+    probability,
+):
+    """Attempt to save a prediction; app still works if MySQL is unavailable."""
+    try:
+        from database import initialize_database, save_transaction
+
         initialize_database()
-        return True, None
+
+        return save_transaction(
+            transaction_time=float(transaction_time),
+            amount=float(amount),
+            actual_class=None,
+            predicted_class=int(predicted_class),
+            fraud_probability=float(probability),
+            input_type="manual_demo",
+        ), None
+
     except Exception as exc:
-        return False, str(exc)
+        return None, str(exc)
 
 
-def money(value):
+def format_money(value):
     return f"${float(value):,.2f}"
 
 
+# Load model
+bundle, model_error = load_model()
+
 st.title("🛡️ Banking Transaction Fraud Detection")
-st.caption(
-    "Academic demonstration using a public credit-card dataset, a Random Forest model, "
-    "Streamlit, and MySQL."
+st.write(
+    "Analyze transaction features with a trained Random Forest model."
 )
 
-bundle = load_model_bundle()
-dataset = load_dataset()
-
 if bundle is None:
-    st.error("Trained model not found. Run `train_model.py` first.")
-    st.code(r".\venv\Scripts\python.exe train_model.py", language="powershell")
-    st.stop()
-
-if dataset is None:
-    st.error("Dataset not found. Place `creditcard.csv` in the `data` folder.")
+    st.error(f"Unable to load the trained model: {model_error}")
+    st.info(
+        "Confirm that `models/random_forest.joblib` is committed to your "
+        "GitHub repository and that the model was saved successfully."
+    )
     st.stop()
 
 model = bundle["model"]
 features = bundle["features"]
-metrics = bundle.get("metrics", {})
-db_ok, db_error = get_database_status()
+metrics = bundle["metrics"]
 
-if not db_ok:
-    st.error(f"MySQL connection failed: {db_error}")
-    st.info(
-        "Start MySQL from the XAMPP Control Panel. If your MySQL root account has a "
-        "password, update DB_CONFIG in database.py."
-    )
+# The full dataset is optional for online deployment.
+dataset = load_dataset()
 
 with st.sidebar:
-    st.header("Project details")
-    st.write("**Model:** Random Forest")
-    st.write("**Database:** MySQL / XAMPP")
-    st.write("**Dataset rows:**", f"{len(dataset):,}")
-    st.write("**Input features:**", len(features))
-    st.divider()
-    st.warning(
-        "Demo only: this project is not a certified banking security system and should "
-        "not be used to approve or reject real transactions."
+    st.header("Project dashboard")
+    st.success("Model loaded successfully")
+    st.write("**Algorithm:** Random Forest")
+    st.write(f"**Input features:** {len(features)}")
+    st.write(
+        "**Dataset:** Available"
+        if dataset is not None
+        else "**Dataset:** Optional / not bundled"
     )
 
-# Summary metrics from the training test split
-metric_cols = st.columns(4)
-metric_cols[0].metric("Precision", f"{metrics.get('precision', 0):.3f}")
-metric_cols[1].metric("Recall", f"{metrics.get('recall', 0):.3f}")
-metric_cols[2].metric("F1 score", f"{metrics.get('f1', 0):.3f}")
-metric_cols[3].metric("Dataset fraud cases", f"{int((dataset['Class'] == 1).sum()):,}")
+    st.divider()
+    st.caption(
+        "Academic demonstration only. Do not use this application "
+        "as the sole basis for real banking decisions."
+    )
 
-if db_ok:
-    try:
-        stats = get_statistics()
-        st.subheader("Prediction overview")
-        cols = st.columns(4)
-        cols[0].metric("Saved predictions", int(stats["saved_predictions"]))
-        cols[1].metric("Predicted fraud", int(stats["predicted_fraud"]))
-        cols[2].metric("Predicted legitimate", int(stats["predicted_legitimate"]))
-        cols[3].metric(
-            "Average fraud probability",
-            f"{float(stats['average_fraud_probability']) * 100:.2f}%",
-        )
-    except Exception as exc:
-        st.warning(f"Could not load database statistics: {exc}")
+# Overview
+m1, m2, m3, m4 = st.columns(4)
 
-tab_predict, tab_history, tab_data, tab_metrics = st.tabs(
-    ["🔍 Predict transaction", "🗂️ Prediction history", "📊 Dataset explorer", "📈 Model metrics"]
+m1.metric("Algorithm", "Random Forest")
+m2.metric("Model inputs", len(features))
+m3.metric(
+    "F1 Score",
+    f"{float(metrics.get('f1', 0)):.3f}"
+    if isinstance(metrics, dict)
+    else "N/A",
+)
+m4.metric(
+    "Dataset",
+    f"{len(dataset):,} rows" if dataset is not None else "Not loaded",
 )
 
-with tab_predict:
-    st.subheader("Choose a testing method")
-    mode = st.radio(
-        "Prediction mode",
-        [
-            "Historical dataset transaction (unchanged features)",
-            "Manual demo (amount/time with a selected feature profile)",
-        ],
-        help=(
-            "Historical mode uses all original feature values from one dataset row. "
-            "Manual demo changes only Time and Amount and is not a realistic newly captured transaction."
-        ),
+if dataset is None:
+    st.info(
+        "The full credit-card dataset is not included in the cloud deployment. "
+        "Manual predictions still work. Dataset exploration is available "
+        "when `data/creditcard.csv` is present."
     )
 
-    actual_class = None
-    input_type = "historical_sample"
+st.divider()
 
-    with st.form("prediction_form"):
-        if mode == "Historical dataset transaction (unchanged features)":
-            sample_index = st.number_input(
-                "Dataset row index",
-                min_value=0,
-                max_value=len(dataset) - 1,
-                value=0,
-                step=1,
-                help="Zero-based row index from creditcard.csv.",
+tab_predict, tab_data, tab_metrics = st.tabs(
+    ["🔍 Predict Transaction", "📊 Dataset Explorer", "📈 Model Metrics"]
+)
+
+# ---------------------------------------------------------
+# PREDICTION
+# ---------------------------------------------------------
+with tab_predict:
+    st.subheader("Transaction analysis")
+    st.write(
+        "Enter transaction details and the feature values required by the model."
+    )
+
+    if "Time" in features:
+        time_default = 0.0
+    else:
+        time_default = 0.0
+
+    if "Amount" in features:
+        amount_default = 100.0
+    else:
+        amount_default = 0.0
+
+    with st.form("transaction_form"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            transaction_time = st.number_input(
+                "Transaction time (seconds)",
+                min_value=0.0,
+                value=time_default,
+                step=60.0,
             )
-            row = dataset.iloc[int(sample_index)]
-            st.write(
-                f"Selected row: **{int(sample_index)}** | "
-                f"Amount: **{money(row['Amount'])}** | "
-                f"Actual dataset label: **{'Fraud' if int(row['Class']) == 1 else 'Legitimate'}**"
-            )
-            st.caption("The model receives the original feature values from this row.")
-            submitted = st.form_submit_button("Predict selected transaction", type="primary")
-            if submitted:
-                input_df = pd.DataFrame(
-                    [[row[column] for column in features]],
-                    columns=features,
-                )
-                actual_class = int(row["Class"])
-                input_type = "historical_sample"
-        else:
-            st.warning(
-                "Demo mode: V1–V28 are taken from a selected dataset row. Only Time and "
-                "Amount are changed, so this is a demonstration input—not a real transaction."
-            )
-            sample_options = {
-                "Legitimate example (Class 0)": dataset.index[dataset["Class"] == 0],
-                "Fraud example (Class 1)": dataset.index[dataset["Class"] == 1],
-            }
-            sample_kind = st.selectbox("Choose a feature profile", list(sample_options.keys()))
-            selected_indices = sample_options[sample_kind]
-            profile_index = st.selectbox(
-                "Choose dataset profile row",
-                options=[int(i) for i in selected_indices[:1000]],
-                index=0,
-            )
-            amount_value = st.number_input(
+
+        with col2:
+            amount = st.number_input(
                 "Transaction amount",
                 min_value=0.0,
-                value=float(dataset.loc[profile_index, "Amount"]),
-                step=1.0,
+                value=amount_default,
+                step=10.0,
                 format="%.2f",
             )
-            time_value = st.number_input(
-                "Transaction time (seconds from dataset start)",
-                min_value=0.0,
-                value=float(dataset.loc[profile_index, "Time"]),
-                step=60.0,
-                format="%.2f",
+
+        other_features = [
+            feature
+            for feature in features
+            if feature not in ("Time", "Amount")
+        ]
+
+        feature_values = {}
+
+        with st.expander(
+            "Advanced model features",
+            expanded=False,
+        ):
+            st.caption(
+                "Enter the actual feature values expected by your trained model. "
+                "For the common Kaggle dataset, V1–V28 are anonymized features. "
+                "Zero values are only a software demonstration, not a reliable "
+                "representation of a real transaction."
             )
-            submitted = st.form_submit_button("Predict demo transaction", type="primary")
-            if submitted:
-                row = dataset.loc[profile_index]
-                input_df = pd.DataFrame(
-                    [[row[column] for column in features]],
-                    columns=features,
-                )
-                if "Amount" in input_df.columns:
-                    input_df.loc[0, "Amount"] = amount_value
-                if "Time" in input_df.columns:
-                    input_df.loc[0, "Time"] = time_value
-                actual_class = None
-                input_type = "manual_demo"
+
+            columns = st.columns(3)
+
+            for index, feature in enumerate(other_features):
+                with columns[index % 3]:
+                    feature_values[feature] = st.number_input(
+                        feature,
+                        value=0.0,
+                        format="%.6f",
+                        key=f"input_{feature}",
+                    )
+
+        submitted = st.form_submit_button(
+            "🔎 Analyze Transaction",
+            type="primary",
+            use_container_width=True,
+        )
 
     if submitted:
         try:
-            prediction = int(model.predict(input_df[features])[0])
-            probability = float(model.predict_proba(input_df[features])[0][1])
+            values = {}
+
+            for feature in features:
+                if feature == "Time":
+                    values[feature] = transaction_time
+                elif feature == "Amount":
+                    values[feature] = amount
+                else:
+                    values[feature] = feature_values.get(feature, 0.0)
+
+            input_df = pd.DataFrame(
+                [[values[feature] for feature in features]],
+                columns=features,
+            )
+
+            prediction = int(model.predict(input_df)[0])
+
+            if hasattr(model, "predict_proba"):
+                probabilities = model.predict_proba(input_df)[0]
+                classes = list(model.classes_)
+
+                probability = (
+                    float(probabilities[classes.index(1)])
+                    if 1 in classes
+                    else 0.0
+                )
+            else:
+                probability = float(prediction)
 
             st.divider()
+            st.subheader("Analysis result")
+
             result_col, probability_col = st.columns(2)
-            if prediction == 1:
-                result_col.error("🚨 Model prediction: POTENTIAL FRAUD")
-            else:
-                result_col.success("✅ Model prediction: LIKELY LEGITIMATE")
-            probability_col.metric("Estimated fraud probability", f"{probability * 100:.2f}%")
-            st.progress(max(0.0, min(1.0, probability)))
 
-            if actual_class is not None:
-                actual_name = "Fraud" if actual_class == 1 else "Legitimate"
-                predicted_name = "Fraud" if prediction == 1 else "Legitimate"
-                if actual_class == prediction:
-                    st.success(f"Dataset label: {actual_name}. Prediction matches this label.")
+            with result_col:
+                if prediction == 1:
+                    st.error("🚨 Potential Fraud Detected")
                 else:
-                    st.warning(
-                        f"Dataset label: {actual_name}, but the model predicted {predicted_name}. "
-                        "This is a model error on this example."
+                    st.success("✅ Likely Legitimate Transaction")
+
+            with probability_col:
+                st.metric(
+                    "Estimated fraud probability",
+                    f"{probability * 100:.2f}%",
+                )
+
+            st.progress(
+                max(0.0, min(1.0, probability)),
+                text="Model-estimated fraud probability",
+            )
+
+            st.caption(
+                "This is a model estimate, not a guarantee. Prediction quality "
+                "depends on representative, correctly supplied input features."
+            )
+
+            with st.expander("View input sent to the model"):
+                st.dataframe(
+                    input_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            with st.expander("Save prediction to MySQL"):
+                if st.button("Save prediction", key="save_prediction"):
+                    record_id, db_error = save_to_mysql(
+                        transaction_time=transaction_time,
+                        amount=amount,
+                        predicted_class=prediction,
+                        probability=probability,
                     )
 
-            if db_ok:
-                try:
-                    record_id = save_transaction(
-                        transaction_time=float(input_df.iloc[0]["Time"]),
-                        amount=float(input_df.iloc[0]["Amount"]),
-                        actual_class=actual_class,
-                        predicted_class=prediction,
-                        fraud_probability=probability,
-                        input_type=input_type,
-                    )
-                    st.success(f"Prediction saved to MySQL successfully (record ID: {record_id}).")
-                except Exception as exc:
-                    st.error(f"Prediction was calculated, but could not be saved to MySQL: {exc}")
-            else:
-                st.info("Prediction calculated, but MySQL is unavailable so it was not saved.")
+                    if record_id is not None:
+                        st.success(
+                            f"Prediction saved. Record ID: {record_id}"
+                        )
+                    else:
+                        st.warning(
+                            "Prediction succeeded, but MySQL storage is "
+                            "unavailable. Streamlit Cloud cannot automatically "
+                            "access MySQL running on your personal XAMPP setup."
+                        )
+                        with st.expander("Database error details"):
+                            st.code(str(db_error))
+
         except Exception as exc:
             st.error(f"Prediction failed: {exc}")
 
-with tab_history:
-    st.subheader("Saved prediction history")
-    if not db_ok:
-        st.info("Start MySQL in XAMPP to view saved predictions.")
-    else:
-        try:
-            history = get_transactions(limit=500)
-            if not history:
-                st.info("No predictions have been saved yet.")
-            else:
-                history_df = pd.DataFrame(history)
-                history_df["predicted_label"] = history_df["predicted_class"].map(
-                    {0: "Legitimate", 1: "Fraud"}
-                )
-                history_df["actual_label"] = history_df["actual_class"].map(
-                    {0: "Legitimate", 1: "Fraud"}
-                ).fillna("Not available")
-                history_df["fraud_probability"] = (
-                    history_df["fraud_probability"].astype(float) * 100
-                ).round(2)
-                history_df = history_df.rename(
-                    columns={
-                        "id": "Record ID",
-                        "transaction_time": "Time (seconds)",
-                        "amount": "Amount",
-                        "actual_label": "Dataset label",
-                        "predicted_label": "Prediction",
-                        "fraud_probability": "Fraud probability (%)",
-                        "input_type": "Input type",
-                        "created_at": "Saved at",
-                    }
-                )
-                display_columns = [
-                    "Record ID", "Time (seconds)", "Amount", "Dataset label",
-                    "Prediction", "Fraud probability (%)", "Input type", "Saved at"
-                ]
-                st.dataframe(history_df[display_columns], use_container_width=True, hide_index=True)
-                csv_data = history_df[display_columns].to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Download history as CSV",
-                    data=csv_data,
-                    file_name="banking_fraud_prediction_history.csv",
-                    mime="text/csv",
-                )
-        except Exception as exc:
-            st.error(str(exc))
 
+# ---------------------------------------------------------
+# DATASET EXPLORER
+# ---------------------------------------------------------
 with tab_data:
-    st.subheader("Dataset explorer")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total transactions", f"{len(dataset):,}")
-    c2.metric("Legitimate", f"{int((dataset['Class'] == 0).sum()):,}")
-    c3.metric("Fraud", f"{int((dataset['Class'] == 1).sum()):,}")
+    st.subheader("Dataset overview")
 
-    class_counts = dataset["Class"].value_counts().sort_index().rename(
-        index={0: "Legitimate", 1: "Fraud"}
-    )
-    st.bar_chart(class_counts)
-    st.write("Preview")
-    st.dataframe(dataset.head(20), use_container_width=True, hide_index=True)
+    if dataset is None:
+        st.info(
+            "Dataset explorer is unavailable because the CSV is not present. "
+            "To enable it locally, place the original dataset at "
+            "`data/creditcard.csv`."
+        )
+    elif "Class" not in dataset.columns:
+        st.warning("The CSV does not contain the expected 'Class' column.")
+    else:
+        total = len(dataset)
+        fraud_count = int((dataset["Class"] == 1).sum())
+        legitimate_count = int((dataset["Class"] == 0).sum())
 
-with tab_metrics:
-    st.subheader("Model evaluation")
-    if metrics:
+        a, b, c = st.columns(3)
+        a.metric("Total transactions", f"{total:,}")
+        b.metric("Legitimate transactions", f"{legitimate_count:,}")
+        c.metric("Fraud transactions", f"{fraud_count:,}")
+
+        st.write("Transaction class distribution")
+
+        chart_data = pd.DataFrame(
+            {
+                "Transaction type": ["Legitimate", "Fraud"],
+                "Count": [legitimate_count, fraud_count],
+            }
+        ).set_index("Transaction type")
+
+        st.bar_chart(chart_data)
+
+        st.write("Dataset preview")
         st.dataframe(
-            pd.DataFrame(
-                [
-                    {"Metric": "Precision", "Value": metrics.get("precision", 0)},
-                    {"Metric": "Recall", "Value": metrics.get("recall", 0)},
-                    {"Metric": "F1 score", "Value": metrics.get("f1", 0)},
-                    {"Metric": "ROC-AUC", "Value": metrics.get("roc_auc", 0)},
-                ]
-            ),
+            dataset.head(25),
             use_container_width=True,
             hide_index=True,
         )
-    st.info(
-        "Fraud datasets are highly imbalanced. Accuracy alone can be misleading; examine "
-        "precision, recall, F1, and the confusion matrix printed when training the model."
+
+
+# ---------------------------------------------------------
+# MODEL METRICS
+# ---------------------------------------------------------
+with tab_metrics:
+    st.subheader("Model evaluation metrics")
+
+    if isinstance(metrics, dict) and metrics:
+        metric_rows = []
+
+        for name in (
+            "accuracy",
+            "precision",
+            "recall",
+            "f1",
+            "roc_auc",
+        ):
+            if name in metrics:
+                metric_rows.append(
+                    {
+                        "Metric": name.replace("_", " ").title(),
+                        "Score": float(metrics[name]),
+                    }
+                )
+
+        if metric_rows:
+            metric_df = pd.DataFrame(metric_rows)
+            st.dataframe(
+                metric_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.bar_chart(
+                metric_df.set_index("Metric")
+            )
+        else:
+            st.info(
+                "The model file does not contain recognized evaluation metrics."
+            )
+    else:
+        st.info(
+            "No saved evaluation metrics were found in the model file. "
+            "Run train_model.py locally to generate them."
+        )
+
+    st.caption(
+        "Fraud detection datasets are highly imbalanced. Review precision, "
+        "recall, F1 score, and ROC-AUC rather than relying on accuracy alone."
     )
+
+st.divider()
+st.caption("Banking Transaction Fraud Detection | Academic project")
