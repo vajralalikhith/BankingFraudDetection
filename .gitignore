@@ -7,7 +7,6 @@ venv/
 
 # Dataset and trained model
 data/creditcard.csv
-models/*.joblib
 
 # Streamlit
 .streamlit/secrets.toml
