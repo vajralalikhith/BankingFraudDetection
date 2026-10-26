@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Banking Fraud Detection</title>
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #0b1120;
+            color: white;
+        }
+
+        .card {
+            max-width: 750px;
+            width: 100%;
+            padding: 45px 30px;
+            text-align: center;
+            background: #151f32;
+            border: 1px solid #334155;
+            border-radius: 18px;
+        }
+
+        h1 { font-size: 36px; }
+
+        p {
+            color: #cbd5e1;
+            line-height: 1.7;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            gap: 12px;
+            margin: 30px 0;
+        }
+
+        .stat {
+            padding: 18px 10px;
+            flex: 1;
+            background: #202d43;
+            border-radius: 10px;
+        }
+
+        .stat strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 22px;
+        }
+
+        .stat span { font-size: 13px; }
+
+        .button {
+            display: inline-block;
+            padding: 15px 25px;
+            background: #2563eb;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+
+        .button:hover { background: #1d4ed8; }
+
+        .note { margin-top: 30px; font-size: 12px; }
+
+        @media (max-width: 500px) {
+            h1 { font-size: 28px; }
+            .stats { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <main class="card">
+        <h1>🛡️ Banking Transaction Fraud Detection</h1>
+
+        <p>
+            Analyze banking transactions using a trained
+            Random Forest machine learning model.
+        </p>
+
+        <section class="stats">
+            <div class="stat">
+                <strong>Random Forest</strong>
+                <span>ML Algorithm</span>
+            </div>
+
+            <div class="stat">
+                <strong>30</strong>
+                <span>Model Features</span>
+            </div>
+
+            <div class="stat">
+                <strong>0.839</strong>
+                <span>Reported F1 Score</span>
+            </div>
+        </section>
+
+        <a class="button"
+           href="https://bandfraudprediction.streamlit.app/"
+           target="_blank"
+           rel="noopener noreferrer">
+            Open Live Dashboard →
+        </a>
+
+        <p class="note">
+            Built with Python, scikit-learn, Streamlit and Random Forest.<br>
+            Academic project only. Not intended for real banking decisions.
+        </p>
+    </main>
+</body>
+</html>
