@@ -7,7 +7,7 @@ transactions using Python and a Random Forest classifier.
 
 Click below to open the interactive application.
 
-[![Open Dashboard](https://img.shields.io/badge/Open-Live%20Dashboard-blue?style=for-the-badge)](YOUR_STREAMLIT_APP_URL)
+[![Open Live Dashboard](https://img.shields.io/badge/Open-Live-Dashboard-blue?style=for-the-badge)](https://bandfraudprediction.streamlit.app/)
 
 ## 🛠️ Technologies Used
 
